@@ -1,7 +1,7 @@
 """
-AIR ASSAULT - Versão Python com Pygame
-Instale: pip install pygame
-Execute: python air_assault.py
+AIR ASSAULT - TACTICAL (Horda Massiva e Correção de Waves)
+Sem Áudio.
+Execute: python jogo.py
 """
 import pygame
 import random
@@ -14,761 +14,695 @@ W, H = 960, 560
 GROUND_Y = H - 80
 FPS = 60
 
+display_surf = pygame.Surface((W, H))
 screen = pygame.display.set_mode((W, H))
-pygame.display.set_caption("AIR ASSAULT")
+pygame.display.set_caption("AIR ASSAULT - WARZONE")
+pygame.mouse.set_visible(False)
 clock = pygame.time.Clock()
 
-# ─── CORES ────────────────────────────────────────────────────────────────────
-BLACK   = (0, 0, 0)
-WHITE   = (255, 255, 255)
-GREEN   = (50, 180, 50)
-DKGREEN = (20, 80, 20)
-RED     = (220, 50, 50)
-ORANGE  = (255, 140, 0)
-YELLOW  = (255, 255, 80)
-BLUE    = (30, 100, 200)
-GRAY    = (100, 100, 100)
-BROWN   = (80, 60, 20)
-SKY1    = (6, 12, 28)
-SKY2    = (15, 37, 85)
-SKY3    = (26, 64, 112)
+# ─── CORES E TEMAS ────────────────────────────────────────────────────────────
+WHITE = (255, 255, 255); BLACK = (0, 0, 0)
+GREEN = (50, 220, 50); RED = (220, 50, 50)
+ORANGE = (255, 140, 0); YELLOW = (255, 255, 80)
+CYAN = (50, 200, 255); BLUE = (30, 100, 200); PURPLE = (180, 50, 255)
+SILVER = (192, 192, 192)
+GRAY = (100, 100, 100)
+SKY1 = (6, 12, 28)
 
-# ─── FONTES ───────────────────────────────────────────────────────────────────
-try:
-    font_lg = pygame.font.SysFont("Courier New", 48, bold=True)
-    font_md = pygame.font.SysFont("Courier New", 22, bold=True)
-    font_sm = pygame.font.SysFont("Courier New", 13)
-except:
-    font_lg = pygame.font.Font(None, 52)
-    font_md = pygame.font.Font(None, 26)
-    font_sm = pygame.font.Font(None, 16)
+THEMES = {
+    'forest': {'sky_top': (4, 8, 20), 'sky_bot': (20, 45, 80), 'ground': (20, 45, 20), 'lines': (15, 35, 15), 'border': (50, 100, 40), 'mountains': (15, 25, 40)},
+    'desert': {'sky_top': (60, 20, 0), 'sky_bot': (200, 100, 40), 'ground': (194, 150, 80), 'lines': (160, 110, 50), 'border': (220, 180, 100), 'mountains': (120, 60, 30)},
+    'snow': {'sky_top': (5, 10, 15), 'sky_bot': (40, 50, 70), 'ground': (220, 230, 240), 'lines': (180, 190, 200), 'border': (255, 255, 255), 'mountains': (120, 130, 140)}
+}
 
-# ─── SOM (procedural) ─────────────────────────────────────────────────────────
-def make_sound(freq, duration_ms, vol=0.3, wave='square'):
-    sample_rate = 22050
-    n = int(sample_rate * duration_ms / 1000)
-    buf = bytearray(n * 2)
-    for i in range(n):
-        t = i / sample_rate
-        if wave == 'square':
-            v = vol if (i % int(sample_rate / freq)) < (sample_rate / freq / 2) else -vol
-        elif wave == 'saw':
-            v = vol * (2 * ((t * freq) % 1) - 1)
-        else:
-            v = vol * math.sin(2 * math.pi * freq * t)
-        val = int(v * 32767)
-        val = max(-32768, min(32767, val))
-        buf[i*2]   = val & 0xFF
-        buf[i*2+1] = (val >> 8) & 0xFF
-    return pygame.sndarray.make_sound(
-        pygame.array.array('h', [int(v) for v in
-            [int(vol * 32767 * (math.sin(2*math.pi*freq*i/sample_rate) if wave=='sine'
-              else (1 if (i % max(1,int(sample_rate/freq))) < (sample_rate/max(1,freq)/2) else -1)))
-             for i in range(n)]])
-    )
+font_lg = pygame.font.SysFont("Courier New", 48, bold=True)
+font_md = pygame.font.SysFont("Courier New", 22, bold=True)
+font_sm = pygame.font.SysFont("Courier New", 14, bold=True)
 
-# Gera sons simples
-try:
-    snd_shoot = make_sound(800, 80, 0.08, 'square')
-    snd_explode = make_sound(120, 400, 0.2, 'saw')
-    snd_hit = make_sound(400, 120, 0.12, 'square')
-    snd_rocket = make_sound(300, 200, 0.15, 'saw')
-    snd_pickup = make_sound(800, 250, 0.12, 'sine')
-    SOUND_OK = True
-except:
-    SOUND_OK = False
+# ─── ATRIBUTOS DAS ARMAS ──────────────────────────────────────────────────────
+WEAPON_STATS = {
+    'mg':      {'name': '1:METRALHADORA', 'cooldown': 7,  'heat': 12, 'speed': 18, 'dmg': 20, 'color': CYAN, 'pierce': False, 'size': 3},
+    'shotgun': {'name': '2:ESCOPETA',     'cooldown': 35, 'heat': 35, 'speed': 15, 'dmg': 18, 'color': YELLOW, 'pierce': False, 'size': 4},
+    'plasma':  {'name': '3:PLASMA',       'cooldown': 4,  'heat': 8,  'speed': 25, 'dmg': 10, 'color': PURPLE, 'pierce': True, 'size': 3}
+}
 
-def play(snd):
-    if SOUND_OK:
-        try: snd.play()
-        except: pass
-
-# ─── PARTÍCULAS ───────────────────────────────────────────────────────────────
+# ─── PARTÍCULAS E EXPLOSÕES ───────────────────────────────────────────────────
 class Particle:
-    def __init__(self, x, y, big=False, kind='fire'):
-        self.x = x + random.uniform(-10, 10) if kind == 'smoke' else x
-        self.y = y
-        self.kind = kind
-        angle = random.uniform(0, math.pi * 2)
+    def __init__(self, x, y, kind='fire', big=False):
+        self.x, self.y, self.kind = x, y, kind
+        ang = random.uniform(0, math.pi * 2)
         if kind == 'fire':
-            speed = random.uniform(2, 6) if big else random.uniform(1, 3)
-            self.vx = math.cos(angle) * speed
-            self.vy = math.sin(angle) * speed - (2.5 if big else 1)
-            colors = [(255,100,0),(255,50,0),(255,180,0),(255,240,80)]
-            self.color = random.choice(colors)
-            self.size = random.randint(4, 9) if big else random.randint(2, 5)
-            self.life = 1.0
-            self.decay = 0.018 if big else 0.03
+            spd = random.uniform(2, 8) if big else random.uniform(1, 4)
+            self.vx, self.vy = math.cos(ang) * spd, math.sin(ang) * spd - (3 if big else 1)
+            self.color = random.choice([(255,255,200), (255,200,50), (255,100,0), (200,30,0)])
+            self.size, self.life, self.decay = random.uniform(5, 12) if big else random.uniform(2, 6), 1.0, random.uniform(0.015, 0.03)
         elif kind == 'smoke':
-            speed = random.uniform(0.3, 1.8) if big else random.uniform(0.2, 1.0)
-            self.vx = math.cos(angle) * speed
-            self.vy = math.sin(angle) * speed - 0.8
-            self.color = (60, 70, 55)
-            self.size = random.randint(8, 18) if big else random.randint(4, 10)
-            self.life = 1.0
-            self.decay = 0.009
-        else:  # spark
-            speed = random.uniform(1, 3)
-            self.vx = math.cos(angle) * speed
-            self.vy = math.sin(angle) * speed
-            self.color = (255, 220, 80)
-            self.size = random.randint(2, 4)
-            self.life = 1.0
-            self.decay = 0.12
+            self.x += random.uniform(-10, 10)
+            spd = random.uniform(0.5, 2.0)
+            self.vx, self.vy = math.cos(ang) * spd - 1.0, math.sin(ang) * spd - 1.5
+            self.color = (random.randint(40, 80),)*3
+            self.size, self.life, self.decay = random.uniform(8, 20) if big else random.uniform(5, 12), 1.0, random.uniform(0.01, 0.02)
+        elif kind == 'debris':
+            spd = random.uniform(4, 12)
+            self.vx, self.vy = math.cos(ang) * spd, math.sin(ang) * spd - 4
+            self.color = random.choice([(80,80,80), (50,50,50), (120,60,30)])
+            self.size, self.life, self.decay = random.uniform(2, 5), 1.0, random.uniform(0.01, 0.02)
+        else: # spark
+            spd = random.uniform(3, 7)
+            self.vx, self.vy = math.cos(ang) * spd, math.sin(ang) * spd
+            self.color = CYAN if big else (255, 255, 150)
+            self.size, self.life, self.decay = random.uniform(1, 3), 1.0, random.uniform(0.05, 0.1)
 
     def update(self):
-        self.x += self.vx
-        self.y += self.vy
-        if self.kind == 'fire':
-            self.vy -= 0.07
-        self.vx *= 0.98
-        self.vy *= 0.98
-        self.size *= 0.97
-        self.life -= self.decay
+        self.x += self.vx; self.y += self.vy
+        if self.kind == 'debris':
+            self.vy += 0.4
+            if self.y >= GROUND_Y: self.y, self.vy, self.vx = GROUND_Y, -self.vy * 0.4, self.vx * 0.6
+        elif self.kind == 'fire': self.vy -= 0.1; self.size *= 0.94
+        elif self.kind == 'smoke': self.size += 0.2; self.vy -= 0.05
+        self.vx *= 0.95; self.vy *= 0.95; self.life -= self.decay
 
     def draw(self, surf):
-        if self.life <= 0 or self.size < 0.5:
-            return
-        alpha = int(self.life * 255)
-        if self.kind == 'smoke':
-            alpha = int(self.life * 100)
+        if self.life <= 0 or self.size < 0.5: return
         s = max(1, int(self.size))
-        tmp = pygame.Surface((s*2, s*2), pygame.SRCALPHA)
-        r = min(255, self.color[0])
-        g = min(255, self.color[1])
-        b = min(255, self.color[2])
-        pygame.draw.circle(tmp, (r, g, b, alpha), (s, s), s)
-        surf.blit(tmp, (int(self.x) - s, int(self.y) - s))
+        if self.kind in ['smoke', 'fire']:
+            tmp = pygame.Surface((s*2, s*2), pygame.SRCALPHA)
+            pygame.draw.circle(tmp, (*self.color, int(self.life * 255) if self.kind == 'smoke' else 255), (s, s), s)
+            surf.blit(tmp, (int(self.x) - s, int(self.y) - s), special_flags=pygame.BLEND_ALPHA_SDL2)
+        else:
+            pygame.draw.circle(surf, self.color, (int(self.x), int(self.y)), s)
 
 def explode(particles, x, y, big=True):
-    n = 28 if big else 12
-    for _ in range(n):
-        particles.append(Particle(x, y, big, 'fire'))
-    for _ in range(10 if big else 4):
-        particles.append(Particle(x, y, big, 'smoke'))
+    for _ in range(30 if big else 10): particles.append(Particle(x, y, 'fire', big))
+    for _ in range(15 if big else 5):  particles.append(Particle(x, y, 'smoke', big))
+    for _ in range(10 if big else 3):  particles.append(Particle(x, y, 'debris', big))
 
-def sparks(particles, x, y):
-    for _ in range(6):
-        particles.append(Particle(x, y, False, 'spark'))
+# ─── FUNDO (MAPAS) ────────────────────────────────────────────────────────────
+class Background:
+    def __init__(self):
+        self.stars_snow = [{'x': random.randint(0, W), 'y': random.randint(0, H), 's': random.uniform(0.1, 0.5)} for _ in range(100)]
+        self.mountains = [{'x': i*90+random.randint(0,50), 'h': 50+random.randint(0,180), 'w': 70+random.randint(0,120), 'layer': random.randint(0,2)} for i in range(40)]
 
-# ─── FUNDO ────────────────────────────────────────────────────────────────────
-def gen_bg():
-    mountains = [{'x': i*90+random.randint(0,50), 'h': 50+random.randint(0,130),
-                  'w': 70+random.randint(0,90), 'layer': random.randint(0,2)} for i in range(30)]
-    trees = [{'x': i*55+random.randint(0,40), 'h': 18+random.randint(0,28),
-               'w': 10+random.randint(0,8)} for i in range(50)]
-    clouds = [{'x': i*80+random.randint(0,60), 'y': 30+random.randint(0,100),
-                'w': 50+random.randint(0,90), 'h': 20+random.randint(0,22),
-                'sp': 0.15+random.random()*0.25} for i in range(14)]
-    return mountains, trees, clouds
+    def draw(self, surf, scroll_x, theme_name):
+        th = THEMES[theme_name]
+        for y in range(GROUND_Y):
+            t = y / GROUND_Y
+            c = (th['sky_top'][0] + (th['sky_bot'][0]-th['sky_top'][0])*t,
+                 th['sky_top'][1] + (th['sky_bot'][1]-th['sky_top'][1])*t,
+                 th['sky_top'][2] + (th['sky_bot'][2]-th['sky_top'][2])*t)
+            pygame.draw.line(surf, c, (0, y), (W, y))
+            
+        for s in self.stars_snow:
+            sx = (s['x'] - scroll_x * s['s'] * (0.2 if theme_name != 'snow' else 1.0)) % W
+            sy = s['y']
+            if theme_name == 'snow': s['y'] = (s['y'] + s['s'] * 2) % H
+            pygame.draw.circle(surf, (200, 200, 255) if theme_name!='snow' else WHITE, (int(sx), int(sy)), 1 if s['s'] < 0.3 else 2)
 
-def draw_bg(surf, mountains, trees, clouds, scroll_x, frame):
-    # Céu degradê
-    for y in range(GROUND_Y):
-        t = y / GROUND_Y
-        r = int(SKY1[0] + (SKY3[0]-SKY1[0])*t)
-        g = int(SKY1[1] + (SKY3[1]-SKY1[1])*t)
-        b = int(SKY1[2] + (SKY3[2]-SKY1[2])*t)
-        pygame.draw.line(surf, (r, g, b), (0, y), (W, y))
+        for layer in range(3):
+            pf = 0.1 + layer * 0.15
+            for m in self.mountains:
+                if m['layer'] != layer: continue
+                mx = int((m['x'] - scroll_x * pf) % (W+400) - 150)
+                pts = [(mx, GROUND_Y), (mx, int(GROUND_Y - m['h']*0.5)), (int(mx + m['w']//2), int(GROUND_Y - m['h'])), (int(mx + m['w']), int(GROUND_Y - m['h']*0.5)), (int(mx + m['w']), GROUND_Y)]
+                pygame.draw.polygon(surf, th['mountains'], pts)
+                
+        pygame.draw.rect(surf, th['ground'], (0, GROUND_Y, W, H - GROUND_Y))
+        for x in range(-(int(scroll_x * 0.9) % 40), W, 40):
+            pygame.draw.line(surf, th['lines'], (x, GROUND_Y), (x - 20, H), 2)
+        pygame.draw.line(surf, th['border'], (0, GROUND_Y), (W, GROUND_Y), 3)
 
-    # Nuvens
-    for c in clouds:
-        cx = int((c['x'] - scroll_x * c['sp'] * 0.4) % (W+250) - 100)
-        r, g, b = 160, 185, 220
-        tmp = pygame.Surface((int(c['w']), int(c['h'])), pygame.SRCALPHA)
-        pygame.draw.ellipse(tmp, (r,g,b,25), (0, 0, int(c['w']), int(c['h'])))
-        surf.blit(tmp, (cx - int(c['w'])//2, int(c['y']) - int(c['h'])//2))
-
-    # Montanhas
-    for layer in range(3):
-        pf = 0.15 + layer * 0.18
-        alpha = 20 + layer*22
-        for m in mountains:
-            if m['layer'] != layer: continue
-            mx = int((m['x'] - scroll_x * pf) % (W+400) - 150)
-            pts = [
-                (mx, GROUND_Y),
-                (mx, int(GROUND_Y - m['h']*0.5)),
-                (int(mx + m['w']//2), int(GROUND_Y - m['h'])),
-                (int(mx + m['w']), int(GROUND_Y - m['h']*0.5)),
-                (int(mx + m['w']), GROUND_Y)
-            ]
-            tmp = pygame.Surface((W, H), pygame.SRCALPHA)
-            pygame.draw.polygon(tmp, (8, 25, 50, alpha), pts)
-            surf.blit(tmp, (0, 0))
-
-    # Chão
-    for y in range(GROUND_Y, H):
-        t = (y - GROUND_Y) / (H - GROUND_Y)
-        r = int(20*(1-t) + 8*t)
-        g = int(52*(1-t) + 14*t)
-        b = int(15*(1-t) + 6*t)
-        pygame.draw.line(surf, (r, g, b), (0, y), (W, y))
-
-    # Grade no chão
-    gi = 55
-    go = int(scroll_x) % gi
-    for x in range(-go, W, gi):
-        pygame.draw.line(surf, (30, 80, 20, 60), (x, GROUND_Y), (x, H))
-    pygame.draw.line(surf, (26, 90, 18), (0, GROUND_Y), (W, GROUND_Y), 2)
-
-    # Árvores
-    for t in trees:
-        tx = int((t['x'] - scroll_x * 0.92) % (W+120) - 60)
-        th, tw = int(t['h']), int(t['w'])
-        pygame.draw.rect(surf, (26, 14, 6), (tx+tw//2-2, GROUND_Y-int(th*.35), 4, int(th*.35)))
-        pygame.draw.polygon(surf, (13, 46, 10),
-            [(tx, GROUND_Y-int(th*.35)), (tx+tw//2, GROUND_Y-th), (tx+tw, GROUND_Y-int(th*.35))])
-        pygame.draw.polygon(surf, (18, 58, 14),
-            [(tx+2, GROUND_Y-int(th*.55)), (tx+tw//2, GROUND_Y-int(th*1.08)), (tx+tw-2, GROUND_Y-int(th*.55))])
-
-# ─── JOGADOR ──────────────────────────────────────────────────────────────────
+# ─── JOGADOR, INVENTÁRIO E REGEN ──────────────────────────────────────────────
 class Player:
     def __init__(self):
-        self.x = 160.0; self.y = float(H//2)
-        self.vx = 0.0; self.vy = 0.0
-        self.w = 76; self.h = 28; self.spd = 5.2
-        self.hp = 100; self.max_hp = 100
-        self.scooldown = 0; self.srate = 8
-        self.rockets = 5; self.rcooldown = 0
-        self.inv = 0
+        self.x, self.y = 160.0, float(H//2)
+        self.vx, self.vy = 0.0, 0.0
+        self.w, self.h, self.spd = 76, 28, 6.0
+        
+        self.hp = self.max_hp = 100.0
+        self.level, self.xp, self.next_xp = 1, 0, 50
+        
+        self.weapons = ['mg'] 
+        self.cur_wep = 'mg'   
+        self.scooldown = 0
+        self.rockets, self.rcooldown = 5, 0
+        self.aim_angle = 0
+        self.heat, self.max_heat = 0.0, 100.0
+        self.overheated = False
+        
+        self.inv, self.dash_cd, self.is_dashing = 0, 0, False
+        self.shield = False
+        self.time_since_hit = 0
+        self.regen_delay = 180
+        self.regen_rate = 0.15
 
-    def update(self, keys):
+    def take_damage(self, amount, screen_shake):
+        if self.shield:
+            self.shield = False; self.inv = 60
+        else:
+            self.hp -= amount; self.inv = 30; self.time_since_hit = 0
+            return max(screen_shake, 8)
+        return screen_shake
+
+    def update(self, keys, mx, my, particles):
+        self.aim_angle = math.atan2(my - self.y, mx - self.x)
         ax, ay = 0, 0
-        if keys[pygame.K_LEFT]  or keys[pygame.K_a]: ax = -1
-        if keys[pygame.K_RIGHT] or keys[pygame.K_d]: ax =  1
-        if keys[pygame.K_UP]    or keys[pygame.K_w]: ay = -1
-        if keys[pygame.K_DOWN]  or keys[pygame.K_s]: ay =  1
-        self.vx = (self.vx + ax*.55) * .84
-        self.vy = (self.vy + ay*.55) * .84
-        self.vx = max(-self.spd, min(self.spd, self.vx))
-        self.vy = max(-self.spd, min(self.spd, self.vy))
-        self.x += self.vx; self.y += self.vy
-        self.x = max(self.w//2, min(W-self.w//2, self.x))
-        self.y = max(self.h//2+50, min(GROUND_Y-self.h//2-4, self.y))
-        if self.scooldown > 0: self.scooldown -= 1
-        if self.rcooldown > 0: self.rcooldown -= 1
-        if self.inv > 0: self.inv -= 1
+        if keys[pygame.K_LEFT] or keys[pygame.K_a]: ax = -1
+        if keys[pygame.K_RIGHT] or keys[pygame.K_d]: ax = 1
+        if keys[pygame.K_UP] or keys[pygame.K_w]: ay = -1
+        if keys[pygame.K_DOWN] or keys[pygame.K_s]: ay = 1
+        
+        if keys[pygame.K_LSHIFT] and self.dash_cd == 0:
+            self.vx, self.dash_cd, self.is_dashing = 25.0 if ax >= 0 else -25.0, 90, True
+            for _ in range(10): particles.append(Particle(self.x, self.y, 'smoke'))
+
+        if self.is_dashing:
+            self.vx *= 0.85
+            if abs(self.vx) < self.spd + 1: self.is_dashing = False
+        else:
+            self.vx, self.vy = (self.vx + ax*0.8) * 0.85, (self.vy + ay*0.8) * 0.85
+            self.vx, self.vy = max(-self.spd, min(self.spd, self.vx)), max(-self.spd, min(self.spd, self.vy))
+            
+        self.x, self.y = max(self.w//2, min(W-self.w//2, self.x + self.vx)), max(self.h//2+50, min(GROUND_Y-self.h//2-4, self.y + self.vy))
+        
+        self.time_since_hit += 1
+        if self.time_since_hit > self.regen_delay and self.hp < self.max_hp:
+            self.hp = min(self.max_hp, self.hp + self.regen_rate)
+            if random.random() < 0.1:
+                particles.append(Particle(self.x + random.randint(-20,20), self.y + random.randint(-10,10), 'spark', big=False))
+                particles[-1].color = GREEN
+
+        if not self.overheated:
+            self.heat = max(0, self.heat - 1.5)
+            if self.heat >= self.max_heat: self.overheated = True
+        else:
+            self.heat -= 0.5
+            if self.heat <= 0: self.overheated = False
+
+        self.scooldown = max(0, self.scooldown - 1)
+        self.rcooldown = max(0, self.rcooldown - 1)
+        self.inv = max(0, self.inv - 1)
+        self.dash_cd = max(0, self.dash_cd - 1)
+
+    def add_xp(self, amount, particles):
+        self.xp += amount
+        if self.xp >= self.next_xp:
+            self.level += 1; self.xp -= self.next_xp; self.next_xp = int(self.next_xp * 1.5)
+            self.max_hp += 20; self.hp = self.max_hp
+            for _ in range(20): particles.append(Particle(self.x, self.y, 'spark', big=True))
+
+    def unlock_weapon(self, particles):
+        available = [w for w in ['shotgun', 'plasma'] if w not in self.weapons]
+        if available:
+            new_wep = random.choice(available)
+            self.weapons.append(new_wep)
+            self.cur_wep = new_wep
+            for _ in range(15): particles.append(Particle(self.x, self.y, 'spark', big=True))
+        else:
+            self.add_xp(30, particles) 
+            self.rockets += 3
 
     def draw(self, surf, frame):
-        if self.inv > 0 and (frame // 4) % 2 == 1:
-            return
-        x, y = int(self.x), int(self.y)
-        # Corpo
-        pygame.draw.ellipse(surf, (58, 120, 58), (x-self.w//2, y-self.h//2, self.w, self.h))
-        # Cockpit
-        pygame.draw.ellipse(surf, (26, 90, 122), (x+8, y-self.h//3, self.w//4, self.h//2))
-        # Cauda
-        pygame.draw.polygon(surf, (42, 106, 42),
-            [(x-self.w//2+8, y), (x-self.w//2-8, y-self.h//2), (x-self.w//2-8, y+self.h//2)])
-        # Canhão
-        pygame.draw.rect(surf, (30, 62, 30), (x+self.w//4, y-2, self.w//3+12, 5))
-        # Cano do canhão (flash)
-        if self.scooldown > self.srate - 3:
-            pygame.draw.circle(surf, YELLOW, (x+self.w//4+self.w//3+16, y), 4)
-        # Rotor principal (3 pás)
-        rot_angle = (frame * 0.52) % (math.pi * 2)
-        for i in range(3):
-            a = rot_angle + i * 2.094
-            ex2 = int(x + 5 + math.cos(a) * 38)
-            ey2 = int(y - self.h//2 - 2 + math.sin(a) * 7)
-            pygame.draw.line(surf, (170, 220, 170), (x+5, y-self.h//2-2), (ex2, ey2), 3)
-        # Rotor cauda
-        tr = (frame * 0.35) % (math.pi * 2)
-        for i in range(2):
-            a = tr + i * math.pi
-            ex2 = int(x - self.w//2 - 5 + math.cos(a) * 10)
-            ey2 = int(y + math.sin(a) * 3)
-            pygame.draw.line(surf, (136, 204, 136), (x-self.w//2-5, y), (ex2, ey2), 2)
-        # HP bar
-        bw = 64
-        bx = x - bw//2; by = y - self.h//2 - 13
-        pygame.draw.rect(surf, (34, 34, 34), (bx, by, bw, 5))
-        hr = self.hp / self.max_hp
-        hcol = GREEN if hr > .5 else ORANGE if hr > .25 else RED
-        pygame.draw.rect(surf, hcol, (bx, by, int(bw*hr), 5))
+        if self.inv > 0 and (frame // 4) % 2 == 1: return
+        x, y, tilt = int(self.x), int(self.y), int(self.vx * 1.5)
+        
+        pygame.draw.ellipse(surf, (40, 90, 40), (x-self.w//2, y-self.h//2 - tilt//4, self.w, self.h))
+        pygame.draw.ellipse(surf, (20, 150, 255), (x+8, y-self.h//3 - tilt//4, self.w//4, self.h//2))
+        pygame.draw.polygon(surf, (30, 70, 30), [(x-self.w//2+10, y - tilt//4), (x-self.w//2-15, y-self.h//2 - tilt), (x-self.w//2-15, y+self.h//4 - tilt)])
+        
+        cx, cy = x + math.cos(self.aim_angle)*25, y + 4 + math.sin(self.aim_angle)*25
+        pygame.draw.line(surf, (20, 20, 20), (x, y+4), (cx, cy), 6)
+        
+        rot_angle = (frame * 0.6) % (math.pi * 2)
+        for i in range(4):
+            a = rot_angle + i * 1.57
+            pygame.draw.line(surf, (200, 200, 200), (x, y-self.h//2-4), (int(x + math.cos(a) * 45), int(y - self.h//2 - 6 + math.sin(a) * 6)), 3)
+            
+        pygame.draw.rect(surf, (30,30,30), (x-20, y-30, 40, 5))
+        pygame.draw.rect(surf, RED if self.overheated else (YELLOW if self.heat > 70 else WHITE), (x-20, y-30, int(40 * (self.heat/self.max_heat)), 5))
+        if self.shield: pygame.draw.circle(surf, (50, 200, 255), (x, y), 50, 2)
 
-# ─── INIMIGOS ─────────────────────────────────────────────────────────────────
+# ─── INIMIGOS E BOSS ──────────────────────────────────────────────────────────
 class Enemy:
-    def __init__(self, kind, wave):
-        sx = W + 60
-        mult = 1 + (wave-1)*0.12
+    def __init__(self, kind, wave, theme, px=0, py=0):
         self.kind = kind
         self.dead = False
-        if kind == 'tank':
-            self.x=sx; self.y=GROUND_Y-26; self.w=58; self.h=26
-            self.vx=-(0.9*mult); self.vy=0
-            self.hp=60+wave*8; self.max_hp=self.hp
-            self.sc=int(80+random.random()*60); self.sr=90
-            self.pts=100
+        self.theme = theme
+        self.x = W + 30 
+        
+        m = 1 + (wave-1)*0.15
+        speed_mod = 1.3 if theme == 'desert' else 1.0
+        hp_mod = 1.2 if theme == 'snow' else 1.0
+        
+        if kind == 'drone':
+            self.y, self.w, self.h = py + random.randint(-100, 100), 20, 20
+            self.vx, self.vy = 0, 0
+            self.hp = self.max_hp = (20+wave*5) * hp_mod
+            self.pts, self.sc, self.sr = 30, 0, 0 
+        elif kind == 'tank':
+            self.y, self.w, self.h = GROUND_Y-26, 65, 30
+            self.vx, self.vy = -(1.0*m) * speed_mod, 0
+            self.hp = self.max_hp = (80+wave*10) * hp_mod
+            self.sc, self.sr, self.pts = int(60+random.random()*60), 80, 100
         elif kind == 'jeep':
-            self.x=sx; self.y=GROUND_Y-18; self.w=42; self.h=18
-            self.vx=-(1.8*mult); self.vy=0
-            self.hp=25+wave*5; self.max_hp=self.hp
-            self.sc=int(45+random.random()*35); self.sr=55
-            self.pts=50
+            self.y, self.w, self.h = GROUND_Y-18, 45, 20
+            self.vx, self.vy = -(2.5*m) * speed_mod, 0
+            self.hp = self.max_hp = (30+wave*5) * hp_mod
+            self.sc, self.sr, self.pts = int(40+random.random()*30), 50, 50
         elif kind == 'heli':
-            self.ty=70+random.random()*(GROUND_Y-160)
-            self.x=sx; self.y=self.ty; self.w=58; self.h=22
-            self.vx=-(1.2*mult); self.vy=0
-            self.hp=45+wave*7; self.max_hp=self.hp
-            self.sc=int(50+random.random()*50); self.sr=70
-            self.pts=150; self.rot=0; self.bob=random.random()*6.28
+            self.ty = 80+random.random()*(GROUND_Y-200)
+            self.y, self.w, self.h = self.ty, 65, 26
+            self.vx, self.vy = -(1.5*m) * speed_mod, 0
+            self.hp = self.max_hp = (60+wave*8) * hp_mod
+            self.sc, self.sr, self.pts, self.rot, self.bob = int(40+random.random()*40), 60, 150, 0, random.random()*6.28
         elif kind == 'turret':
-            self.x=sx+random.random()*80; self.y=GROUND_Y-36; self.w=22; self.h=36
-            self.vx=0; self.vy=0
-            self.hp=80+wave*12; self.max_hp=self.hp
-            self.sc=int(90+random.random()*40); self.sr=130
-            self.pts=200
+            self.x += random.random()*100
+            self.y, self.w, self.h = GROUND_Y-36, 26, 40
+            self.vx, self.vy = 0, 0
+            self.hp = self.max_hp = (100+wave*15) * hp_mod
+            self.sc, self.sr, self.pts = int(70+random.random()*30), 100, 200
 
-    def update(self, scroll_spd):
-        self.x += self.vx
-        if self.kind == 'turret': self.x -= scroll_spd
-        if self.kind == 'heli':
-            self.bob += 0.018
-            self.y = self.ty + math.sin(self.bob) * 18
-            self.rot = (self.rot + 0.28) % (math.pi*2)
+    def get_colors(self):
+        if self.theme == 'desert': return (160, 130, 70), (120, 90, 40)
+        elif self.theme == 'snow': return (190, 190, 200), (140, 140, 150)
+        else: return (30, 30, 30), (80, 70, 30)
+
+    def update(self, scroll_spd, px, py):
+        if self.kind == 'drone':
+            angle = math.atan2(py - self.y, px - self.x)
+            spd = 6.0 if self.theme == 'desert' else 4.5
+            self.vx, self.vy = math.cos(angle) * spd, math.sin(angle) * spd
+            self.x += self.vx; self.y += self.vy
+        else:
+            if self.kind in ('tank', 'jeep', 'turret'):
+                self.x -= scroll_spd  
+                self.x += self.vx
+            else:
+                self.x += self.vx
+                if self.kind == 'heli':
+                    self.bob += 0.03; self.y = self.ty + math.sin(self.bob) * 30
+                    self.rot = (self.rot + 0.4) % (math.pi*2)
 
     def draw(self, surf, frame, px, py):
         x, y = int(self.x), int(self.y)
-        if self.kind == 'tank':
-            to = (frame//5) % 7
-            pygame.draw.rect(surf, (42, 42, 14), (x-self.w//2, y-4, self.w, 4+self.h//4))
-            pygame.draw.rect(surf, (90, 90, 32), (x-self.w//2, y-self.h, self.w, self.h))
-            pygame.draw.ellipse(surf, (106, 106, 40), (x-self.w//2+8, y-self.h-8, 28, 18))
-            pygame.draw.line(surf, (58, 58, 18), (x-4, y-self.h), (x-32, y-self.h+5), 4)
+        c1, c2 = self.get_colors()
+        if self.kind in ['tank', 'jeep', 'turret']: pygame.draw.ellipse(surf, (10, 20, 10), (x-self.w//2, GROUND_Y-5, self.w, 10))
+
+        if self.kind == 'drone':
+            pygame.draw.circle(surf, RED if self.theme != 'snow' else (100,200,255), (x, y), self.w//2)
+            pygame.draw.circle(surf, YELLOW, (x, y), self.w//4)
+            pygame.draw.line(surf, ORANGE, (x, y), (x - self.vx*3, y - self.vy*3), 3)
+        elif self.kind == 'tank':
+            pygame.draw.rect(surf, c1, (x-self.w//2-5, y-4, self.w+10, 10))
+            pygame.draw.rect(surf, c2, (x-self.w//2, y-self.h, self.w, self.h))
+            angle = math.atan2(py - (y-self.h), px - x)
+            pygame.draw.line(surf, (50, 50, 50), (x, y-self.h), (x + math.cos(angle)*30, y - self.h + math.sin(angle)*30), 6)
+            pygame.draw.ellipse(surf, c1, (x-15, y-self.h-10, 30, 20))
         elif self.kind == 'jeep':
-            pygame.draw.rect(surf, (74, 106, 40), (x-self.w//2, y-self.h, self.w, int(self.h*.65)))
-            pygame.draw.rect(surf, (58, 90, 26), (x-self.w//2+4, y-self.h, self.w-8, self.h))
-            wa = (frame * 0.18) % (math.pi*2)
-            for wx in [x-self.w//2+7, x+self.w//2-7]:
-                pygame.draw.circle(surf, (26, 26, 10), (wx, y), 6)
-                pygame.draw.line(surf, (85, 85, 85),
-                    (int(wx+math.cos(wa)*4), int(y+math.sin(wa)*4)),
-                    (int(wx-math.cos(wa)*4), int(y-math.sin(wa)*4)), 1)
+            pygame.draw.rect(surf, c2, (x-self.w//2, y-self.h, self.w, int(self.h*.7)))
+            pygame.draw.rect(surf, c1, (x-self.w//2+5, y-self.h, self.w-10, self.h))
+            wa = (frame * 0.3) % (math.pi*2)
+            for wx in [x-self.w//2+8, x+self.w//2-8]:
+                pygame.draw.circle(surf, (20, 20, 20), (wx, y), 8)
+                pygame.draw.line(surf, (100,100,100), (int(wx+math.cos(wa)*6), int(y+math.sin(wa)*6)), (int(wx-math.cos(wa)*6), int(y-math.sin(wa)*6)), 2)
         elif self.kind == 'heli':
-            pygame.draw.ellipse(surf, (122, 42, 26), (x-self.w//2, y-self.h//2, self.w, self.h))
-            pygame.draw.ellipse(surf, (170, 34, 0), (x-self.w//2+4, y-self.h//3, self.w//4, self.h//2))
-            pygame.draw.polygon(surf, (106, 34, 16),
-                [(x-self.w//2+8, y), (x-self.w//2-8, y-self.h//2), (x-self.w//2-8, y+self.h//2)])
-            pygame.draw.rect(surf, (58, 18, 8), (x+self.w//4, y-2, self.w//3+6, 4))
+            pygame.draw.ellipse(surf, c2, (x-self.w//2, y-self.h//2, self.w, self.h))
+            pygame.draw.ellipse(surf, c1, (x-self.w//2+5, y-self.h//3, self.w//4, self.h//2))
             for i in range(3):
-                a = self.rot + i * 2.094
-                ex2 = int(x + 5 + math.cos(a) * 28)
-                ey2 = int(y - self.h//2 - 2 + math.sin(a) * 5)
-                pygame.draw.line(surf, (204, 85, 51), (x+5, y-self.h//2-2), (ex2, ey2), 2)
+                a = self.rot + i * 2.09
+                pygame.draw.line(surf, (180, 180, 180), (x, y-self.h//2-4), (int(x + math.cos(a) * 35), int(y - self.h//2 - 4 + math.sin(a) * 8)), 3)
         elif self.kind == 'turret':
-            pygame.draw.rect(surf, (58, 58, 20), (x-11, y, 22, 8))
-            pygame.draw.rect(surf, (90, 90, 32), (x-8, y-self.h+8, 16, self.h-8))
-            dx = px - x; dy = py - (y-self.h//2)
-            ga = math.atan2(dy, dx)
-            end_x = int(x + math.cos(ga)*22)
-            end_y = int(y - self.h//2 + math.sin(ga)*22)
-            pygame.draw.line(surf, (42, 42, 8), (x, y-int(self.h*.55)), (end_x, end_y), 4)
-        # HP bar
-        if self.hp < self.max_hp:
-            bw = self.w; bh = 4
-            bx = x - self.w//2
-            by = y - (self.h//2 if self.kind in ('heli','turret') else self.h) - 8
-            pygame.draw.rect(surf, (34, 34, 34), (bx, by, bw, bh))
-            r = self.hp / self.max_hp
-            pygame.draw.rect(surf, GREEN if r > .5 else RED, (bx, by, int(bw*r), bh))
+            pygame.draw.rect(surf, c1, (x-13, y, 26, 10))
+            pygame.draw.rect(surf, c2, (x-10, y-self.h+10, 20, self.h-10))
+            ga = math.atan2(py - (y-self.h//2), px - x)
+            pygame.draw.line(surf, (255, 50, 50), (x, y-self.h//2), (x+math.cos(ga)*800, y-self.h//2+math.sin(ga)*800), 1)
+            pygame.draw.line(surf, (30, 30, 30), (x, y-int(self.h*.6)), (int(x + math.cos(ga)*25), int(y - self.h//2 + math.sin(ga)*25)), 8)
+            
+        if self.x > W:
+            pygame.draw.polygon(surf, RED, [(W - 5, y), (W - 15, y - 6), (W - 15, y + 6)])
 
-# ─── PICKUP ───────────────────────────────────────────────────────────────────
-class Pickup:
-    def __init__(self, x, y, kind, from_air=False):
-        self.x = float(x); self.y = float(y)
-        self.vx = 0; self.vy = 0.8 if from_air else 0
-        self.kind = kind; self.life = 320
+class Boss:
+    def __init__(self):
+        self.x, self.y, self.w, self.h = W + 200, H//2, 180, 100
+        self.hp = self.max_hp = 3500 
+        self.dead, self.phase, self.timer = False, 'enter', 0
+        self.bob = 0
 
-    def update(self):
-        self.y += self.vy
-        if self.y > GROUND_Y - 12: self.vy = 0
-        self.x -= 0
-        self.life -= 1
+    def update(self, player_x, player_y, e_bullets):
+        self.bob += 0.05
+        self.y = H//2 + math.sin(self.bob) * 50
+        
+        if self.phase == 'enter':
+            self.x -= 2
+            if self.x <= W - 150: self.phase, self.timer = 'attack', 120
+        elif self.phase == 'attack':
+            self.timer -= 1
+            if self.timer <= 0:
+                self.timer = 120
+                if random.random() > 0.5:
+                    for i in range(-3, 4): e_bullets.append(Bullet(self.x-90, self.y, -10, i*2, False, 10, ORANGE, 3))
+                else:
+                    for _ in range(8): e_bullets.append(Bullet(self.x-90, self.y-30+random.randint(-20,20), -12, random.uniform(-2,2), False, 10, ORANGE, 3))
 
     def draw(self, surf, frame):
         x, y = int(self.x), int(self.y)
-        pulse = int(math.sin(frame * .09) * 2)
-        if self.kind == 'health':
-            pygame.draw.rect(surf, (0, 200, 50), (x-10, y-3, 20, 6))
-            pygame.draw.rect(surf, (0, 200, 50), (x-3, y-10, 6, 20))
-        elif self.kind == 'rocket':
-            pygame.draw.rect(surf, ORANGE, (x-8, y-3, 16, 6))
-            pygame.draw.polygon(surf, RED, [(x+8, y-3), (x+14, y), (x+8, y+3)])
-        else:
-            pygame.draw.circle(surf, BLUE, (x, y), 8+pulse//3)
-            lbl = font_sm.render('A', True, WHITE)
-            surf.blit(lbl, (x-lbl.get_width()//2, y-lbl.get_height()//2))
-        pygame.draw.rect(surf, (200, 200, 200, 150), (x-12, y-12, 24, 24), 1)
+        pygame.draw.ellipse(surf, (150, 180, 220), (x-self.w//2, y-self.h//2, self.w, self.h)) 
+        pygame.draw.rect(surf, (80, 90, 100), (x-self.w//2-20, y-20, 60, 40))
+        for off_x in [-50, 50]:
+            pygame.draw.line(surf, (50, 60, 70), (x+off_x, y-self.h//2), (x+off_x, y-self.h//2-20), 8)
+            rot = (frame * 0.5) % (math.pi * 2)
+            pygame.draw.line(surf, WHITE, (x+off_x - math.cos(rot)*60, y-self.h//2-20), (x+off_x + math.cos(rot)*60, y-self.h//2-20), 4)
 
-# ─── PROJÉTEIS ────────────────────────────────────────────────────────────────
 class Bullet:
-    def __init__(self, x, y, vx, vy, friendly):
-        self.x=float(x); self.y=float(y)
-        self.vx=vx; self.vy=vy
-        self.friendly=friendly
-
+    def __init__(self, x, y, vx, vy, friendly, damage, color=CYAN, size=3, pierce=False):
+        self.x, self.y, self.vx, self.vy = float(x), float(y), vx, vy
+        self.friendly, self.damage = friendly, damage
+        self.color, self.size, self.pierce = color, size, pierce
+        self.hit_enemies = [] 
+        
     def update(self): self.x+=self.vx; self.y+=self.vy
-
     def draw(self, surf):
-        col = YELLOW if self.friendly else RED
-        angle = math.atan2(self.vy, self.vx)
-        x, y = int(self.x), int(self.y)
-        ex = int(x - math.cos(angle)*5); ey = int(y - math.sin(angle)*2)
-        pygame.draw.line(surf, col, (x, y), (ex, ey), 2)
-        pygame.draw.circle(surf, col, (x, y), 2)
+        pygame.draw.line(surf, self.color, (int(self.x), int(self.y)), (int(self.x - math.cos(math.atan2(self.vy, self.vx))*15), int(self.y - math.sin(math.atan2(self.vy, self.vx))*15)), self.size)
+        pygame.draw.circle(surf, WHITE, (int(self.x), int(self.y)), self.size)
 
 class Rocket:
-    def __init__(self, x, y):
-        self.x=float(x); self.y=float(y)
-        self.vx=10.0; self.vy=0.0; self.life=130
-
-    def update(self, enemies):
+    def __init__(self, x, y, aim_angle):
+        self.x, self.y, self.life = float(x), float(y), 150
+        self.vx = math.cos(aim_angle) * 12.0
+        self.vy = math.sin(aim_angle) * 12.0
+        
+    def update(self, enemies, boss, particles):
         self.x+=self.vx; self.y+=self.vy; self.life-=1
-        ne = None; nd = 350
-        for e in enemies:
+        particles.append(Particle(self.x, self.y, 'smoke'))
+        ne, nd = None, 400
+        for e in enemies + ([boss] if boss and not boss.dead else []):
             d = math.hypot(e.x-self.x, e.y-self.y)
-            if d < nd: nd=d; ne=e
+            if d < nd: nd, ne = d, e
         if ne:
-            dx=ne.x-self.x; dy=ne.y-self.y; d=math.hypot(dx,dy)
-            if d>0: self.vx+=dx/d*.55; self.vy+=dy/d*.3
-            sp=math.hypot(self.vx,self.vy)
-            if sp>13: self.vx=self.vx/sp*13; self.vy=self.vy/sp*13
-
+            d = math.hypot(ne.x-self.x, ne.y-self.y)
+            if d>0: self.vx+= (ne.x-self.x)/d*1.2; self.vy+= (ne.y-self.y)/d*1.2
+            sp = math.hypot(self.vx,self.vy)
+            if sp>18: self.vx, self.vy = self.vx/sp*18, self.vy/sp*18
     def draw(self, surf):
         x, y = int(self.x), int(self.y)
-        angle = math.atan2(self.vy, self.vx)
-        cos_a, sin_a = math.cos(angle), math.sin(angle)
-        pts = [
-            (int(x + cos_a*12), int(y + sin_a*12)),
-            (int(x - sin_a*3), int(y + cos_a*3)),
-            (int(x - cos_a*8), int(y - sin_a*8)),
-            (int(x + sin_a*3), int(y - cos_a*3)),
-        ]
-        pygame.draw.polygon(surf, ORANGE, pts)
-        pygame.draw.circle(surf, RED, (int(x - cos_a*8), int(y - sin_a*8)), 4)
+        ca, sa = math.cos(math.atan2(self.vy, self.vx)), math.sin(math.atan2(self.vy, self.vx))
+        pygame.draw.polygon(surf, WHITE, [(x+ca*15, y+sa*15), (x-sa*4, y+ca*4), (x-ca*10, y-sa*10), (x+sa*4, y-ca*4)])
+        pygame.draw.circle(surf, ORANGE, (int(x - ca*10), int(y - sa*10)), 5)
 
-# ─── HUD ──────────────────────────────────────────────────────────────────────
-def draw_hud(surf, player, score, hi_score, wave, lives, wave_left, frame):
-    # Barras
-    bar = pygame.Surface((W, 46), pygame.SRCALPHA)
-    bar.fill((0, 0, 0, 165)); surf.blit(bar, (0, 0))
-    bar2 = pygame.Surface((W, 40), pygame.SRCALPHA)
-    bar2.fill((0, 0, 0, 165)); surf.blit(bar2, (0, H-40))
+class Pickup:
+    def __init__(self, x, y, kind, from_air=False):
+        self.x, self.y, self.vy, self.kind, self.life, self.bob = float(x), float(y), 1.5 if from_air else 0, kind, 400, 0
+    def update(self):
+        self.y += self.vy; self.life -= 1; self.bob += 0.1
+        if self.y > GROUND_Y - 15: self.vy = 0
+    def draw(self, surf):
+        x, y = int(self.x), int(self.y + math.sin(self.bob)*3)
+        if self.kind == 'xp': pygame.draw.circle(surf, BLUE, (x, y), 8); pygame.draw.circle(surf, WHITE, (x, y), 10, 1) 
+        elif self.kind == 'health': pygame.draw.rect(surf, GREEN, (x-10, y-4, 20, 8)); pygame.draw.rect(surf, GREEN, (x-4, y-10, 8, 20))
+        elif self.kind == 'rocket': pygame.draw.rect(surf, ORANGE, (x-10, y-4, 20, 8)); pygame.draw.polygon(surf, RED, [(x+10, y-4), (x+18, y), (x+10, y+4)])
+        elif self.kind == 'shield': pygame.draw.circle(surf, CYAN, (x, y), 10); pygame.draw.circle(surf, WHITE, (x, y), 14, 2)
+        elif self.kind == 'weapon': pygame.draw.rect(surf, SILVER, (x-8, y-8, 16, 16)); pygame.draw.rect(surf, PURPLE, (x-8, y-8, 16, 16), 2); surf.blit(font_sm.render('W', True, BLACK), (x-4, y-7))
+        if self.kind != 'xp': pygame.draw.circle(surf, WHITE, (x, y), 16, 1)
 
-    def txt(text, f, color, x, y, align='left'):
-        s = f.render(text, True, color)
-        if align == 'right': x -= s.get_width()
-        elif align == 'center': x -= s.get_width()//2
-        surf.blit(s, (x, y))
+def draw_hud(surf, player, score, wave, boss, theme_name):
+    bar = pygame.Surface((W, 55), pygame.SRCALPHA); bar.fill((0, 0, 0, 180)); surf.blit(bar, (0, 0))
+    bar2 = pygame.Surface((W, 55), pygame.SRCALPHA); bar2.fill((0, 0, 0, 180)); surf.blit(bar2, (0, H-55))
 
-    txt('SCORE', font_sm, (68, 102, 68), 10, 6)
-    txt(str(score).zfill(7), font_md, (204, 255, 204), 10, 20)
-    txt(f'WAVE {wave}/6', font_sm, (68, 102, 68), W//2, 6, 'center')
-    if wave_left > 0:
-        txt(f'INIMIGOS: {wave_left}', font_sm, (170, 170, 170), W//2, 20, 'center')
-    txt('HI-SCORE', font_sm, (68, 102, 68), W-10, 6, 'right')
-    txt(str(hi_score).zfill(7), font_md, (255, 221, 85), W-10, 20, 'right')
+    surf.blit(font_sm.render('SCORE', True, (100, 150, 100)), (15, 8))
+    surf.blit(font_md.render(str(score).zfill(7), True, WHITE), (15, 25))
+    
+    map_text = "FLORESTA" if theme_name == 'forest' else ("DESERTO" if theme_name == 'desert' else "GELO")
+    w_text = font_sm.render(f'WAVE {wave}/6 [{map_text}]' if wave <=6 else 'BOSS BATTLE', True, RED if wave > 6 else (100, 150, 100))
+    surf.blit(w_text, (W//2 - w_text.get_width()//2, 8))
 
-    # HP
-    txt('HP', font_sm, (68,102,68), 10, H-35)
-    pygame.draw.rect(surf, (34,34,34), (10, H-22, 110, 12))
-    hr = player.hp / player.max_hp
-    hcol = GREEN if hr > .5 else ORANGE if hr > .25 else RED
-    pygame.draw.rect(surf, hcol, (10, H-22, int(110*hr), 12))
-    pygame.draw.rect(surf, GRAY, (10, H-22, 110, 12), 1)
+    regen_txt = "+ REGEN ATIVO +" if (player.time_since_hit > player.regen_delay and player.hp < player.max_hp) else ""
+    surf.blit(font_sm.render(f'HP (LVL {player.level}) {regen_txt}', True, GREEN if regen_txt else (100,150,100)), (15, H-45))
+    pygame.draw.rect(surf, (40,20,20), (15, H-30, 150, 12))
+    pygame.draw.rect(surf, GREEN if player.hp > (player.max_hp*0.3) else RED, (15, H-30, int(150*(max(0,player.hp)/player.max_hp)), 12))
+    
+    pygame.draw.rect(surf, (20,20,60), (15, H-16, 150, 4))
+    pygame.draw.rect(surf, BLUE, (15, H-16, int(150*(player.xp/player.next_xp)), 4))
+    
+    surf.blit(font_sm.render('ARMAS (1,2,3)', True, (100,150,100)), (200, H-45))
+    wx = 200
+    for w_id, w_info in WEAPON_STATS.items():
+        if w_id in player.weapons:
+            color = CYAN if player.cur_wep == w_id else GRAY
+            surf.blit(font_sm.render(w_info['name'], True, color), (wx, H-30))
+            wx += 110
+    
+    surf.blit(font_sm.render('FOGUETES (Botão Dir)', True, (100,150,100)), (550, H-45))
+    for i in range(10): pygame.draw.rect(surf, (40,40,40), (550+i*14, H-30, 10, 12))
+    for i in range(player.rockets): pygame.draw.rect(surf, ORANGE, (550+i*14, H-30, 10, 12))
+    
+    surf.blit(font_sm.render('DASH (SHIFT)', True, (100,150,100)), (750, H-45))
+    pygame.draw.rect(surf, (40,40,40), (750, H-30, 100, 12))
+    pygame.draw.rect(surf, CYAN, (750, H-30, int(100*(1-(player.dash_cd/90))), 12))
+    
+    if boss and not boss.dead:
+        pygame.draw.rect(surf, (50,0,0), (W//2 - 200, 30, 400, 15))
+        pygame.draw.rect(surf, RED, (W//2 - 200, 30, int(400*(boss.hp/boss.max_hp)), 15))
 
-    # Foguetes
-    txt('FOGUETES', font_sm, (68,102,68), 130, H-35)
-    for i in range(player.rockets):
-        pygame.draw.rect(surf, ORANGE, (130+i*13, H-22, 9, 12))
+def draw_crosshair(surf, mx, my, player):
+    wep = WEAPON_STATS[player.cur_wep]
+    col = RED if player.overheated else wep['color']
+    pygame.draw.circle(surf, col, (mx, my), 15, 1)
+    pygame.draw.circle(surf, col, (mx, my), 2)
+    pygame.draw.line(surf, col, (mx-20, my), (mx-5, my), 2)
+    pygame.draw.line(surf, col, (mx+5, my), (mx+20, my), 2)
+    pygame.draw.line(surf, col, (mx, my-20), (mx, my-5), 2)
+    pygame.draw.line(surf, col, (mx, my+5), (mx, my+20), 2)
 
-    # Vidas
-    txt('VIDAS', font_sm, (68,102,68), W-10, H-35, 'right')
-    for i in range(lives):
-        lx = W-20-i*26; ly = H-14
-        pygame.draw.ellipse(surf, (51,204,51), (lx-9, ly-4, 18, 8))
-        pygame.draw.polygon(surf, (34,170,34), [(lx-6,ly),(lx-14,ly-4),(lx-14,ly+4)])
-        pygame.draw.line(surf, (136,238,136), (lx-6, ly-8), (lx+6, ly-8), 2)
-
-def draw_message(surf, lines, colors=None):
-    overlay = pygame.Surface((W, H), pygame.SRCALPHA)
-    overlay.fill((0, 0, 0, 195))
-    surf.blit(overlay, (0, 0))
-    total_h = len(lines) * 60
-    start_y = H//2 - total_h//2
-    for i, line in enumerate(lines):
-        f = font_lg if i == 0 else font_md
-        col = (colors[i] if colors and i < len(colors) else WHITE)
-        s = f.render(line, True, col)
-        surf.blit(s, (W//2 - s.get_width()//2, start_y + i*60))
-
-# ─── JOGO PRINCIPAL ───────────────────────────────────────────────────────────
+# ─── MAIN LOOP (Sistema de Ondas Corrigido) ───────────────────────────────────
+# O triplo de inimigos para um combate verdadeiramente tático e frenético
 WAVE_CONFIG = [
-    {'tank':2,'jeep':3,'heli':1,'turret':0},
-    {'tank':3,'jeep':3,'heli':2,'turret':1},
-    {'tank':4,'jeep':4,'heli':3,'turret':1},
-    {'tank':5,'jeep':4,'heli':4,'turret':2},
-    {'tank':6,'jeep':5,'heli':5,'turret':3},
-    {'tank':8,'jeep':6,'heli':6,'turret':3},
+    {'tank':4,'jeep':6,'drone':5,'heli':2,'turret':1}, 
+    {'tank':6,'jeep':8,'drone':8,'heli':4,'turret':2}, 
+    {'tank':8,'jeep':10,'drone':12,'heli':6,'turret':4}, 
+    {'tank':10,'jeep':12,'drone':16,'heli':8,'turret':6}, 
+    {'tank':15,'jeep':15,'drone':20,'heli':12,'turret':8}, 
+    {'tank':0,'jeep':0,'drone':0,'heli':0,'turret':0}  
 ]
 
-def build_queue(cfg):
-    q = []
-    for k, v in cfg.items():
-        q += [k] * v
-    random.shuffle(q)
-    return q
+def get_theme_for_wave(wave):
+    if wave <= 2: return 'forest'
+    elif wave <= 4: return 'desert'
+    else: return 'snow'
 
 def main():
-    gs = 'menu'
-    score = hi_score = 0
-    wave = 1; lives = 3
-    frame = 0; scroll_x = 0.0
-    SCROLL_SPD = 1.2
-
-    player = Player()
-    p_bullets = []; p_rockets = []; e_bullets = []
-    enemies = []; particles = []; pickups = []
-    spawn_queue = []; spawn_timer = 0
-    wave_left = 0; wave_complete = False; wave_clear_timer = 0
-
-    mountains, trees, clouds = gen_bg()
-    bg_surf = None
+    gs, score, wave, frame, scroll_x, screen_shake = 'menu', 0, 1, 0, 0.0, 0
+    player, bg = Player(), Background()
+    p_bullets, p_rockets, e_bullets, enemies, particles, pickups = [], [], [], [], [], []
+    spawn_queue, spawn_timer, wave_complete, wave_clear_timer, boss = [], 0, False, 0, None
+    theme_name = 'forest'
 
     def start_wave(w):
-        nonlocal spawn_queue, spawn_timer, wave_left, wave_complete, wave_clear_timer
-        cfg = WAVE_CONFIG[min(w-1, len(WAVE_CONFIG)-1)]
-        spawn_queue = build_queue(cfg)
-        wave_left = len(spawn_queue)
-        spawn_timer = 55
-        wave_complete = False
-        wave_clear_timer = 0
-        player.hp = min(player.max_hp, player.hp + 30)
-
-    def start_game():
-        nonlocal gs, score, wave, lives, frame, scroll_x
-        nonlocal p_bullets, p_rockets, e_bullets, enemies, particles, pickups
-        nonlocal spawn_queue, spawn_timer, wave_left, wave_complete, wave_clear_timer
-        nonlocal mountains, trees, clouds
-        gs='playing'; score=0; wave=1; lives=3; frame=0; scroll_x=0.0
-        p_bullets=[]; p_rockets=[]; e_bullets=[]; enemies=[]; particles=[]; pickups=[]
-        wave_complete=False; wave_clear_timer=0
-        player.__init__()
-        mountains, trees, clouds = gen_bg()
-        start_wave(1)
-
-    def kill_enemy(e):
-        nonlocal score, hi_score, wave_left
-        e.dead = True
-        score += e.pts * wave
-        if score > hi_score: hi_score = score
-        wave_left = max(0, wave_left-1)
-        ex, ey = e.x, e.y if e.kind == 'heli' else e.y - e.h//2
-        explode(particles, ex, ey, True)
-        play(snd_explode)
-        if random.random() < 0.32:
-            kinds = ['health','rocket','ammo']
-            py = e.y if e.kind == 'heli' else GROUND_Y-14
-            pickups.append(Pickup(ex, py, random.choice(kinds), e.kind=='heli'))
-
-    def player_died():
-        nonlocal lives, gs
-        explode(particles, player.x, player.y, True)
-        play(snd_explode)
-        lives -= 1
-        if lives <= 0:
-            if score > hi_score: hi_score = score
-            gs = 'over'; return
-        player.hp=100; player.x=160; player.y=H//2
-        player.vx=player.vy=0; player.inv=120
-        p_bullets.clear(); p_rockets.clear(); e_bullets.clear()
+        nonlocal spawn_queue, spawn_timer, wave_complete, wave_clear_timer, boss, theme_name
+        theme_name = get_theme_for_wave(w)
+        if w == 6:
+            boss = Boss()
+        else:
+            spawn_queue = []
+            for k, v in WAVE_CONFIG[min(w-1, 4)].items(): spawn_queue += [k] * v
+            random.shuffle(spawn_queue)
+        spawn_timer, wave_complete, wave_clear_timer = 30, False, 0
 
     running = True
     while running:
         dt_keys = pygame.key.get_pressed()
+        mx, my = pygame.mouse.get_pos()
+        mouse_btns = pygame.mouse.get_pressed()
+        
         for ev in pygame.event.get():
             if ev.type == pygame.QUIT: running = False; sys.exit()
             if ev.type == pygame.KEYDOWN:
-                if ev.key == pygame.K_ESCAPE: running = False; sys.exit()
                 if ev.key == pygame.K_SPACE and gs in ('menu','over','win'):
-                    start_game()
+                    gs, score, wave, frame, p_bullets, p_rockets, e_bullets, enemies, particles, pickups, boss = 'playing', 0, 1, 0, [], [], [], [], [], [], None
+                    player = Player(); start_wave(1)
+                
+                if gs == 'playing':
+                    if ev.key == pygame.K_1 and 'mg' in player.weapons: player.cur_wep = 'mg'
+                    if ev.key == pygame.K_2 and 'shotgun' in player.weapons: player.cur_wep = 'shotgun'
+                    if ev.key == pygame.K_3 and 'plasma' in player.weapons: player.cur_wep = 'plasma'
 
         if gs == 'playing':
-            frame += 1; scroll_x += SCROLL_SPD
-            player.update(dt_keys)
-            # Shoot
-            if dt_keys[pygame.K_SPACE] and player.scooldown == 0:
-                gx = int(player.x + player.w//2 + 14); gy = int(player.y)
-                p_bullets.append(Bullet(gx, gy, 13, 0, True))
-                p_bullets.append(Bullet(gx, gy-6, 13, -0.3, True))
-                p_bullets.append(Bullet(gx, gy+6, 13, 0.3, True))
-                player.scooldown = player.srate; play(snd_shoot)
-            if dt_keys[pygame.K_f] and player.rcooldown == 0 and player.rockets > 0:
-                p_rockets.append(Rocket(player.x+player.w//2, player.y))
-                player.rockets -= 1; player.rcooldown = 22; play(snd_rocket)
+            frame += 1; scroll_x += 2.5; screen_shake = max(0, screen_shake - 1)
+            player.update(dt_keys, mx, my, particles)
+            
+            if mouse_btns[0] and player.scooldown <= 0 and not player.is_dashing and not player.overheated:
+                wep = WEAPON_STATS[player.cur_wep]
+                player.heat += wep['heat']
+                player.scooldown = max(2, wep['cooldown'] - (player.level * 0.3))
+                bx, by = player.x + math.cos(player.aim_angle)*25, player.y + 4 + math.sin(player.aim_angle)*25
+                dmg = wep['dmg'] + (player.level * 2)
+                
+                if player.cur_wep == 'mg':
+                    p_bullets.append(Bullet(bx, by, math.cos(player.aim_angle)*wep['speed'], math.sin(player.aim_angle)*wep['speed'], True, dmg, wep['color'], wep['size'], wep['pierce']))
+                elif player.cur_wep == 'shotgun':
+                    for ang_off in [-0.2, -0.1, 0, 0.1, 0.2]:
+                        a = player.aim_angle + ang_off
+                        p_bullets.append(Bullet(bx, by, math.cos(a)*wep['speed'], math.sin(a)*wep['speed'], True, dmg, wep['color'], wep['size'], wep['pierce']))
+                elif player.cur_wep == 'plasma':
+                    bx1, by1 = bx + math.cos(player.aim_angle - 1.57)*6, by + math.sin(player.aim_angle - 1.57)*6
+                    bx2, by2 = bx + math.cos(player.aim_angle + 1.57)*6, by + math.sin(player.aim_angle + 1.57)*6
+                    p_bullets.append(Bullet(bx1, by1, math.cos(player.aim_angle)*wep['speed'], math.sin(player.aim_angle)*wep['speed'], True, dmg, wep['color'], wep['size'], wep['pierce']))
+                    p_bullets.append(Bullet(bx2, by2, math.cos(player.aim_angle)*wep['speed'], math.sin(player.aim_angle)*wep['speed'], True, dmg, wep['color'], wep['size'], wep['pierce']))
+                
+            if mouse_btns[2] and player.rcooldown <= 0 and player.rockets > 0:
+                p_rockets.append(Rocket(player.x, player.y, player.aim_angle)); player.rockets -= 1; player.rcooldown = 25; screen_shake = max(screen_shake, 3)
 
-            # Update bullets
             for b in p_bullets: b.update()
-            p_bullets[:] = [b for b in p_bullets if 0 < b.x < W+20]
+            p_bullets[:] = [b for b in p_bullets if 0 < b.x <= W and 0 < b.y < H] 
+            
             for b in p_bullets[:]:
+                hit_something = False
                 for e in enemies:
-                    if e.dead: continue
-                    ex = e.x-e.w//2; ey = e.y-e.h
-                    if ex < b.x < ex+e.w and ey < b.y < ey+e.h:
-                        e.hp -= 10; sparks(particles, int(b.x), int(b.y))
-                        if e.hp <= 0: kill_enemy(e)
-                        else: play(snd_hit)
-                        try: p_bullets.remove(b)
-                        except: pass
-                        break
-
-            for r in p_rockets: r.update(enemies)
-            for r in p_rockets[:]:
-                if r.x > W+20 or r.life <= 0:
-                    p_rockets.remove(r); continue
-                if r.y > GROUND_Y-5:
-                    explode(particles, r.x, GROUND_Y, False)
-                    play(snd_explode); p_rockets.remove(r); continue
-                hit = False
-                for e in enemies:
-                    if e.dead: continue
-                    if math.hypot(e.x-r.x, e.y-r.y) < 42:
-                        e.hp -= 65; explode(particles, r.x, r.y, True); play(snd_explode)
-                        if e.hp <= 0: kill_enemy(e)
-                        hit = True; break
-                if hit:
-                    try: p_rockets.remove(r)
+                    if not e.dead and e.x <= W and e not in b.hit_enemies and e.x-e.w//2 < b.x < e.x+e.w//2 and e.y-e.h < b.y < e.y+e.h:
+                        e.hp -= b.damage; particles.append(Particle(b.x, b.y, 'spark')); hit_something = True
+                        b.hit_enemies.append(e)
+                        if e.hp <= 0:
+                            e.dead = True; score += e.pts; screen_shake = max(screen_shake, 5); explode(particles, e.x, e.y, True)
+                            pickups.append(Pickup(e.x, e.y, 'xp', True)) 
+                            
+                            drop_chance = random.random()
+                            if e.kind in ['heli', 'tank'] and drop_chance < 0.15: 
+                                pickups.append(Pickup(e.x+15, e.y if e.kind=='heli' else GROUND_Y-15, 'weapon', e.kind=='heli'))
+                            elif drop_chance < 0.35: 
+                                pickups.append(Pickup(e.x+10, e.y if e.kind=='heli' else GROUND_Y-15, random.choice(['health','rocket','shield'])))
+                
+                if boss and not boss.dead and boss not in b.hit_enemies and abs(b.x-boss.x) < boss.w//2 and abs(b.y-boss.y) < boss.h//2:
+                    boss.hp -= b.damage; particles.append(Particle(b.x, b.y, 'spark')); hit_something = True
+                    b.hit_enemies.append(boss)
+                    if boss.hp <= 0: boss.dead = True; score += 5000; wave_complete = True; explode(particles, boss.x, boss.y, True); screen_shake = 30
+                
+                if hit_something and not b.pierce:
+                    try: p_bullets.remove(b)
                     except: pass
 
+            for r in p_rockets: r.update(enemies, boss, particles)
+            for r in p_rockets[:]:
+                if r.x > W+50 or r.x < -50 or r.y < -50 or r.life <= 0: p_rockets.remove(r); continue
+                if r.y > GROUND_Y-5: explode(particles, r.x, GROUND_Y, False); screen_shake = max(screen_shake, 8); p_rockets.remove(r); continue
+                hit = False
+                for e in enemies + ([boss] if boss and not boss.dead else []):
+                    if e.x <= W and math.hypot(e.x-r.x, e.y-r.y) < (80 if isinstance(e, Boss) else 50):
+                        e.hp -= 150 + (player.level*10); explode(particles, r.x, r.y, True); screen_shake = max(screen_shake, 12); hit = True
+                        if e.hp <= 0:
+                            e.dead = True; score += 5000 if isinstance(e, Boss) else getattr(e, 'pts', 0)
+                            if isinstance(e, Boss): wave_complete = True
+                        break
+                if hit: p_rockets.remove(r)
+
             for b in e_bullets: b.update()
-            e_bullets[:] = [b for b in e_bullets if -20 < b.x < W+20 and -20 < b.y < H+20]
+            e_bullets[:] = [b for b in e_bullets if -50 < b.x < W+50 and -50 < b.y < H+50]
             for b in e_bullets[:]:
-                if player.inv > 0: continue
-                if abs(b.x-player.x) < player.w//2-8 and abs(b.y-player.y) < player.h//2-5:
-                    player.hp -= 10; player.inv = 28
-                    sparks(particles, int(b.x), int(b.y)); play(snd_hit)
-                    if player.hp <= 0: player_died()
+                if player.inv > 0 or player.is_dashing: continue
+                if abs(b.x-player.x) < player.w//2-10 and abs(b.y-player.y) < player.h//2-5:
+                    screen_shake = player.take_damage(15, screen_shake)
+                    explode(particles, b.x, b.y, False)
+                    if player.hp <= 0: gs = 'over'; explode(particles, player.x, player.y, True); screen_shake = 20
                     try: e_bullets.remove(b)
                     except: pass
 
-            # Update enemies
             for e in enemies:
-                if e.dead: continue
-                e.update(SCROLL_SPD)
-                if e.x < -120: e.dead=True; wave_left=max(0,wave_left-1); continue
-                e.sc -= 1
-                if e.sc <= 0:
-                    e.sc = e.sr
-                    dx = player.x - e.x; dy = player.y - (e.y if e.kind=='heli' else e.y - e.h//2)
-                    dist = math.hypot(dx, dy)
-                    if dist < 600 and dist > 0:
-                        sp = 7 if e.kind=='turret' else 5
-                        e_bullets.append(Bullet(e.x, e.y if e.kind=='heli' else e.y-e.h//2, dx/dist*sp, dy/dist*sp, False))
-                if player.inv <= 0:
-                    ey = e.y if e.kind=='heli' else e.y - e.h//2
-                    if abs(player.x-e.x) < (player.w//2+e.w//2-12) and abs(player.y-ey) < (player.h//2+e.h//2-6):
-                        player.hp -= 22; player.inv = 55; e.hp -= 35; play(snd_hit)
-                        if e.hp <= 0: kill_enemy(e)
-                        if player.hp <= 0: player_died()
+                e.update(2.5, player.x, player.y)
+                if e.x < -150: e.dead=True; continue
+                
+                if e.kind != 'drone':
+                    e.sc -= 1
+                    if e.sc <= 0 and e.x < W:
+                        e.sc = e.sr
+                        dist = math.hypot(player.x - e.x, player.y - e.y)
+                        if 0 < dist < 700:
+                            if e.kind == 'heli':
+                                for ang in [-0.2, 0, 0.2]: e_bullets.append(Bullet(e.x, e.y, (player.x-e.x)*math.cos(ang) - (player.y-e.y)*math.sin(ang)/dist*6, (player.x-e.x)*math.sin(ang) + (player.y-e.y)*math.cos(ang)/dist*6, False, 15, ORANGE))
+                            else: e_bullets.append(Bullet(e.x, e.y - e.h//2, (player.x-e.x)/dist*6, (player.y-e.y)/dist*6, False, 15, ORANGE))
+                
+                if player.inv <= 0 and not player.is_dashing and abs(player.x-e.x) < (player.w//2+e.w//2-10) and abs(player.y-(e.y if e.kind in ['heli', 'drone'] else e.y-e.h//2)) < (player.h//2+e.h//2-10):
+                    if player.shield: 
+                        player.shield = False; player.inv = 60
+                        if e.kind == 'drone': 
+                            e.dead = True; explode(particles, e.x, e.y, True)
+                    else: 
+                        if e.kind == 'drone':
+                            screen_shake = player.take_damage(40, screen_shake) 
+                            e.dead = True; explode(particles, e.x, e.y, True)
+                        else:
+                            screen_shake = player.take_damage(30, screen_shake)
+                            e.hp -= 50
+                            if e.hp <= 0:
+                                e.dead = True; explode(particles, e.x, e.y, True)
+                        if player.hp <= 0: gs = 'over'; explode(particles, player.x, player.y, True); screen_shake = 20
+            
             enemies[:] = [e for e in enemies if not e.dead]
+            
+            if boss and not boss.dead: boss.update(player.x, player.y, e_bullets)
 
-            # Pickups
             for p in pickups: p.update()
-            pickups[:] = [p for p in pickups if p.life > 0 and p.x > -40]
+            pickups[:] = [p for p in pickups if p.life > 0 and p.x > -50]
             for p in pickups[:]:
-                if abs(p.x-player.x) < 18 and abs(p.y-player.y) < 18:
-                    if p.kind=='health': player.hp=min(player.max_hp,player.hp+35)
-                    elif p.kind=='rocket': player.rockets=min(10,player.rockets+3)
-                    else: player.srate=max(4,player.srate-1); score+=250
-                    play(snd_pickup)
-                    try: pickups.remove(p)
-                    except: pass
+                if abs(p.x-player.x) < 40 and abs(p.y-player.y) < 40:
+                    if p.kind == 'xp': player.add_xp(10, particles)
+                    elif p.kind == 'health': player.hp=min(player.max_hp,player.hp+50)
+                    elif p.kind == 'rocket': player.rockets=min(15,player.rockets+5)
+                    elif p.kind == 'shield': player.shield = True
+                    elif p.kind == 'weapon': player.unlock_weapon(particles)
+                    pickups.remove(p)
 
-            # Particles
             for pt in particles: pt.update()
-            particles[:] = [p for p in particles if p.life > 0 and p.size > 0.3]
+            particles[:] = [p for p in particles if p.life > 0 and p.size > 0.5]
 
-            # Wave management
+            # NOVO: Spawner dinâmico de inimigos! (Nascem em massa e super rápido)
             if spawn_queue and not wave_complete:
                 spawn_timer -= 1
-                if spawn_timer <= 0:
-                    spawn_timer = 85
-                    spawnEnemy(spawn_queue.pop(0), wave, enemies)
-            if not spawn_queue and len(enemies)==0 and wave_left<=0 and not wave_complete:
-                wave_complete=True; wave_clear_timer=0
-                wave += 1
-                if wave > 6:
-                    if score > hi_score: hi_score=score
-                    gs='win'
+                if spawn_timer <= 0: 
+                    spawn_timer = max(10, 40 - (wave * 5)) # Muito mais rápido nas waves finais
+                    enemies.append(Enemy(spawn_queue.pop(0), wave, theme_name, player.x, player.y))
+                    
+            # NOVO: Correção Definitiva do Bug de "Wave Travada"
+            if not spawn_queue and len(enemies) == 0 and not wave_complete and wave < 6:
+                wave_complete = True; wave_clear_timer = 0; wave += 1
+                
             if wave_complete:
                 wave_clear_timer += 1
-                if wave_clear_timer > 160:
-                    start_wave(wave)
+                if wave_clear_timer > 180:
+                    if wave > 6: gs = 'win'
+                    else: start_wave(wave)
 
-        # ─── RENDER ──────────────────────────────────────────────────────────
-        draw_bg(screen, mountains, trees, clouds, scroll_x, frame)
+        # ─── RENDERIZAR TUDO ─────────────────────────────────────────────
+        if gs != 'menu': bg.draw(display_surf, scroll_x, theme_name)
+        else: display_surf.fill(SKY1)
 
         if gs in ('playing', 'over'):
-            for p in pickups: p.draw(screen, frame)
+            for p in pickups: p.draw(display_surf)
             for pt in particles:
-                if pt.kind == 'smoke': pt.draw(screen)
-            for e in enemies: e.draw(screen, frame, int(player.x), int(player.y))
-            for b in p_bullets: b.draw(screen)
-            for b in e_bullets: b.draw(screen)
-            for r in p_rockets: r.draw(screen)
+                if pt.kind == 'smoke': pt.draw(display_surf)
+            for e in enemies: e.draw(display_surf, frame, int(player.x), int(player.y))
+            if boss and not boss.dead: boss.draw(display_surf, frame)
+            for b in p_bullets + e_bullets: b.draw(display_surf)
+            for r in p_rockets: r.draw(display_surf)
             for pt in particles:
-                if pt.kind != 'smoke': pt.draw(screen)
-            player.draw(screen, frame)
-            draw_hud(screen, player, score, hi_score, wave, lives, wave_left, frame)
-            if wave_complete:
-                wa = min(1.0, wave_clear_timer/35)
-                ov = pygame.Surface((W,H), pygame.SRCALPHA)
-                ov.fill((0,0,0,int(140*wa))); screen.blit(ov,(0,0))
-                m1 = font_lg.render(f'WAVE {wave-1} COMPLETA!', True, (136,255,136))
-                m2 = font_md.render(f'WAVE {wave} EM BREVE...', True, (221,255,221))
-                screen.blit(m1, (W//2-m1.get_width()//2, H//2-30))
-                screen.blit(m2, (W//2-m2.get_width()//2, H//2+26))
+                if pt.kind != 'smoke': pt.draw(display_surf)
+            if gs == 'playing': player.draw(display_surf, frame)
+            
+            draw_hud(display_surf, player, score, wave, boss, theme_name)
+            if gs == 'playing': draw_crosshair(display_surf, mx, my, player)
 
         if gs == 'menu':
-            ov = pygame.Surface((W,H), pygame.SRCALPHA); ov.fill((0,0,0,184)); screen.blit(ov,(0,0))
-            t = font_lg.render('AIR ASSAULT', True, (85,255,85))
-            screen.blit(t, (W//2-t.get_width()//2, H//2-110))
-            if (frame//28)%2==0:
-                t2 = font_md.render('PRESSIONE ESPAÇO PARA INICIAR', True, (136,255,136))
-                screen.blit(t2, (W//2-t2.get_width()//2, H//2+10))
-            t3 = font_sm.render('WASD/SETAS: MOVER  |  ESPAÇO: ATIRAR  |  F: FOGUETE', True, (68,102,68))
-            screen.blit(t3, (W//2-t3.get_width()//2, H//2+60))
-            if hi_score > 0:
-                th = font_md.render(f'RECORDE: {hi_score}', True, (255,221,85))
-                screen.blit(th, (W//2-th.get_width()//2, H//2+100))
+            display_surf.blit(font_lg.render('AIR ASSAULT WARZONE', True, CYAN), (W//2-250, H//2-110))
+            if (frame//30)%2==0: display_surf.blit(font_md.render('PRESSIONE ESPAÇO PARA INICIAR', True, WHITE), (W//2-180, H//2+10))
+            display_surf.blit(font_sm.render('WASD: MOVER | MOUSE: MIRAR/ATIRAR | 1,2,3: ARMAS', True, GRAY), (W//2-200, H//2+70))
 
-        if gs == 'over':
-            ov = pygame.Surface((W,H), pygame.SRCALPHA); ov.fill((0,0,0,200)); screen.blit(ov,(0,0))
-            t = font_lg.render('MISSÃO FALHOU', True, RED)
-            screen.blit(t, (W//2-t.get_width()//2, H//2-80))
-            t2 = font_md.render(f'PONTUAÇÃO: {score}', True, WHITE)
-            screen.blit(t2, (W//2-t2.get_width()//2, H//2-10))
-            if (frame//30)%2==0:
-                t3 = font_md.render('ESPAÇO PARA TENTAR NOVAMENTE', True, (136,136,255))
-                screen.blit(t3, (W//2-t3.get_width()//2, H//2+60))
+        elif gs == 'over':
+            display_surf.blit(font_lg.render('MISSÃO FALHOU', True, RED), (W//2-150, H//2-80))
+            display_surf.blit(font_md.render(f'PONTUAÇÃO FINAL: {score}', True, WHITE), (W//2-130, H//2-10))
 
-        if gs == 'win':
-            ov = pygame.Surface((W,H), pygame.SRCALPHA); ov.fill((0,0,0,200)); screen.blit(ov,(0,0))
-            t = font_lg.render('MISSÃO COMPLETA!', True, YELLOW)
-            screen.blit(t, (W//2-t.get_width()//2, H//2-80))
-            t2 = font_md.render(f'PONTUAÇÃO FINAL: {score}', True, WHITE)
-            screen.blit(t2, (W//2-t2.get_width()//2, H//2-10))
-            if (frame//30)%2==0:
-                t3 = font_md.render('ESPAÇO PARA JOGAR NOVAMENTE', True, (136,255,136))
-                screen.blit(t3, (W//2-t3.get_width()//2, H//2+60))
+        elif gs == 'win':
+            display_surf.blit(font_lg.render('VITÓRIA SUPREMA!', True, YELLOW), (W//2-180, H//2-80))
+            display_surf.blit(font_md.render(f'PONTUAÇÃO: {score}', True, WHITE), (W//2-100, H//2-10))
 
+        screen.blit(display_surf, (random.randint(-screen_shake, screen_shake), random.randint(-screen_shake, screen_shake)))
         pygame.display.flip()
         clock.tick(FPS)
-
-def spawnEnemy(kind, wave, enemies):
-    enemies.append(Enemy(kind, wave))
 
 if __name__ == '__main__':
     main()
